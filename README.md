@@ -1,4 +1,10 @@
-# Blender2Roblox
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="b2r.png">
+  <img src="b2r.png" alt="Blender2Roblox" width="640">
+</picture>
+
+</div>
 
 Send animations from Blender to Roblox Studio: fast, frame-exact, lightweight.
 
