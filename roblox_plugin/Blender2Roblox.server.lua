@@ -1,6 +1,6 @@
 --!nonstrict
--- Blender Link: import Blender animations into Roblox Studio over a localhost link.
--- Install: copy this file into your Studio Plugins folder. Pair: blender_addon/rbx_link.
+-- Blender2Roblox: import Blender animations into Roblox Studio over a localhost link.
+-- Install: copy this file into your Studio Plugins folder. Pair: blender_addon/blender2roblox.
 
 local AnimationClipProvider = game:GetService("AnimationClipProvider")
 local AssetService = game:GetService("AssetService")
@@ -106,13 +106,13 @@ local function rounded(inst, radius)
 end
 
 local widget = plugin:CreateDockWidgetPluginGuiAsync(
-	"BlenderLinkPanel", -- new id so the left-dock default applies even if the old panel was floated
+	"Blender2RobloxPanel", -- new id so the left-dock default applies even if the old panel was floated
 	DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Left, true, false, 300, 600, 260, 320)
 )
-widget.Title = "Blender Link"
-widget.Name = "BlenderLink"
-local toolbar = plugin:CreateToolbar("Blender Link")
-local toggleButton = toolbar:CreateButton("Blender Link", "Show the Blender Link panel", "rbxasset://textures/AnimationEditor/icon_checkmark.png")
+widget.Title = "Blender2Roblox"
+widget.Name = "Blender2Roblox"
+local toolbar = plugin:CreateToolbar("Blender2Roblox")
+local toggleButton = toolbar:CreateButton("Blender2Roblox", "Show the Blender2Roblox panel", "rbxasset://textures/AnimationEditor/icon_checkmark.png")
 toggleButton.ClickableWhenViewportHidden = true
 toggleButton.Click:Connect(function()
 	widget.Enabled = not widget.Enabled
@@ -229,7 +229,7 @@ paint(portBox, "TextColor3", C.MainText)
 local refreshButton = button(connRow, "Refresh", function() end)
 refreshButton.Size = UDim2.new(1, -70, 1, 0)
 refreshButton.LayoutOrder = 2
-local connStatus = text(connSection, "Not connected. Start the link in Blender (N panel > Roblox).")
+local connStatus = text(connSection, "Not connected. Start the link in Blender (N panel > Blender2Roblox).")
 paint(connStatus, "TextColor3", C.DimmedText)
 
 -- Target rig(s)
@@ -732,7 +732,7 @@ local function importArmature(name)
 	end
 	local tBlender = os.clock() - t0
 
-	local folder = ServerStorage:FindFirstChild("BlenderLink") or new("Folder", { Name = "BlenderLink", Parent = ServerStorage })
+	local folder = ServerStorage:FindFirstChild("Blender2Roblox") or new("Folder", { Name = "Blender2Roblox", Parent = ServerStorage })
 	previews = {}
 	local lines, level = {}, nil
 	local ok2, err = pcall(function()
@@ -777,7 +777,7 @@ local function refresh()
 	end
 	local ok, names = pcall(request, "GET", "/armatures")
 	if not ok then
-		connStatus.Text = `Not connected on port {portBox.Text}. Start the link in Blender (N panel > Roblox).`
+		connStatus.Text = `Not connected on port {portBox.Text}. Start the link in Blender (N panel > Blender2Roblox).`
 		paint(connStatus, "TextColor3", C.ErrorText)
 		return
 	end

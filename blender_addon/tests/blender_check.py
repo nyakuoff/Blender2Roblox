@@ -16,7 +16,7 @@ import bpy
 import numpy as np
 
 here = pathlib.Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("rbx_bake", here / "rbx_link" / "bake.py")
+spec = importlib.util.spec_from_file_location("rbx_bake", here / "blender2roblox" / "bake.py")
 bake = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bake)
 
@@ -94,12 +94,12 @@ import threading
 import urllib.request
 
 sys.path.insert(0, str(here))
-import rbx_link  # noqa: E402
+import blender2roblox  # noqa: E402
 
-registered_here = not hasattr(bpy.types.Scene, "rbx_link_port")  # the extension may be installed already
+registered_here = not hasattr(bpy.types.Scene, "blender2roblox_port")  # the extension may be installed already
 if registered_here:
-    rbx_link.register()
-arms = [o for o in bpy.data.objects if o.type == "ARMATURE" and o.name in rbx_link.server.list_armatures()]
+    blender2roblox.register()
+arms = [o for o in bpy.data.objects if o.type == "ARMATURE" and o.name in blender2roblox.server.list_armatures()]
 src = max(arms, key=lambda o: sum(all(p in b for p in bake.MOTOR_PROPS) for b in o.data.bones))
 skinned = next((o for o in arms if bake.is_skinned(o)), None)
 
@@ -123,7 +123,7 @@ tetra = {"id": "rbxassetid://1", "v": [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], "f":
 rig_json["rig"].update(mesh="rbxassetid://1", meshScale=[2, 2, 2], meshOffset=[0, 1, 0])
 rig_json["rig"]["aux"] = [{"jname": "RTHat", "transform": rig_json["rig"]["transform"], "mesh": "rbxassetid://1"}]
 port = 31399
-rbx_link.server.start(port)
+blender2roblox.server.start(port)
 results = {}
 
 
@@ -151,9 +151,9 @@ def client():
 th = threading.Thread(target=client)
 th.start()
 while th.is_alive():  # timers don't tick inside a --python script; pump the job queue by hand
-    rbx_link.server._run_jobs()
+    blender2roblox.server._run_jobs()
     th.join(0.01)
-rbx_link.server.stop()
+blender2roblox.server.stop()
 
 ok = ("error" not in results and results["rig"] in results["arms"] and set(results["rest"]["bones"]) <= {root.get("rbx_source_name", root.name)}
       and results["src"]["bones"].keys() == bake.bake(src)["bones"].keys())
@@ -182,5 +182,5 @@ print("CHECK link round trip:", "ok" if ok else f"FAILED {results.get('error', '
       f"({len(new.data.bones) if new else 0} bones rebuilt from {src.name})")
 failed |= not ok
 if registered_here:
-    rbx_link.unregister()
+    blender2roblox.unregister()
 print("CHECK", "FAILED" if failed else "ok")

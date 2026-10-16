@@ -58,7 +58,7 @@ def export_animation(name, bone_rest=None):
         _progress["done"], _progress["total"] = done, total
 
     try:
-        return bake(ao, exact=bpy.context.scene.rbx_link_exact, progress=report, bone_rest=bone_rest)
+        return bake(ao, exact=bpy.context.scene.blender2roblox_exact, progress=report, bone_rest=bone_rest)
     finally:
         _progress["done"] = _progress["total"]
 
@@ -108,7 +108,7 @@ class _Handler(BaseHTTPRequestHandler):
             MESHES[data["id"]] = data
             self._send(200, len(data["f"]) // 3)
         elif path == "/rig":
-            self._handle(lambda: build_rig(data, bpy.context.scene.rbx_link_rig_mode).name)
+            self._handle(lambda: build_rig(data, bpy.context.scene.blender2roblox_rig_mode).name)
         elif path == "/animation":  # POST form carries Studio's Bone rest lengths for scale calibration
             self._handle(lambda: export_animation(data["name"], data.get("boneRest")))
         else:

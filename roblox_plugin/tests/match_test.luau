@@ -1,6 +1,6 @@
 -- Bone matching check, no Studio needed. Run from roblox_plugin/:
---   sed -n '/BEGIN matchBones/,/END matchBones/p' BlenderLink.server.lua | cat - tests/match_test.luau > /tmp/m.luau && luau /tmp/m.luau
--- Fixtures were generated from the user's test files with rbx_link.bake.
+--   sed -n '/BEGIN matchBones/,/END matchBones/p' Blender2Roblox.server.lua | cat - tests/match_test.luau > /tmp/m.luau && luau /tmp/m.luau
+-- Fixtures were generated from the user's test files with blender2roblox.bake.
 -- RIG is the real rig map of a combo armature ("User" in Off Ball Awk Isagi Ego Ball.blend):
 -- an R15 body, an R6 body and a ball model under three roots in one armature.
 

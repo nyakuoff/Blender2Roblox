@@ -7,7 +7,7 @@ import pathlib
 import numpy as np
 
 spec = importlib.util.spec_from_file_location(
-    "bake", pathlib.Path(__file__).resolve().parents[1] / "rbx_link" / "bake.py"
+    "bake", pathlib.Path(__file__).resolve().parents[1] / "blender2roblox" / "bake.py"
 )
 bake = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bake)
