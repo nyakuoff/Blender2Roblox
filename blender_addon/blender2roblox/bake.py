@@ -47,35 +47,73 @@ def slerp(q0, q1, u):
     return (np.sin((1 - u) * th) * q0 + np.sin(u * th) * q1) / math.sin(th)
 
 
-def reduce_keys(t, pos, quat, stepped, pos_tol, rot_tol):
-    """Indices of samples to keep so every dropped sample is within tolerance.
+def reduce_all(t, pos, quat, stepped, pos_tol, rot_tol):
+    """(F, K) bool mask of samples to keep, for K curves at once.
 
-    A key whose `stepped` flag is set holds its value until the next key
-    (Roblox Constant easing); otherwise it lerps/slerps to the next key.
+    Ramer-Douglas-Peucker on every curve together: each round splits every open
+    segment of every bone in one vectorized pass, so the cost is a few dozen numpy
+    calls instead of one per segment. Every dropped sample stays within tolerance.
+    A key whose `stepped` flag is set holds its value until the next key (Roblox
+    Constant easing); otherwise it lerps/slerps to the next key.
     """
-    n = len(t)
-    keep = {0, n - 1}
-    stack = [(0, n - 1)]
-    while stack:
-        a, b = stack.pop()
-        if b - a < 2:
-            continue
-        j = np.arange(a + 1, b)
-        if stepped[a]:
-            pp, qq = pos[a], quat[a]
-        else:
-            u = ((t[j] - t[a]) / (t[b] - t[a]))[:, None]
-            pp = pos[a] + u * (pos[b] - pos[a])
-            qq = slerp(quat[a], quat[b], u)
-        perr = np.linalg.norm(pos[j] - pp, axis=1) / pos_tol
-        dots = np.clip(np.abs(np.sum(quat[j] * qq, axis=1)), 0.0, 1.0)
+    n, k = stepped.shape
+    keep = np.zeros((n, k), dtype=bool)
+    keep[[0, -1]] = True
+    seg_b, seg_lo, seg_hi = np.arange(k), np.zeros(k, dtype=np.intp), np.full(k, n - 1, dtype=np.intp)
+    while True:
+        open_ = seg_hi - seg_lo >= 2
+        seg_b, seg_lo, seg_hi = seg_b[open_], seg_lo[open_], seg_hi[open_]
+        if not len(seg_b):
+            return keep
+        lens = seg_hi - seg_lo - 1
+        starts = np.cumsum(lens) - lens
+        bone = np.repeat(seg_b, lens)
+        a, b = np.repeat(seg_lo, lens), np.repeat(seg_hi, lens)
+        j = a + 1 + np.arange(lens.sum()) - np.repeat(starts, lens)
+
+        u = ((t[j] - t[a]) / (t[b] - t[a]))[:, None]
+        hold = stepped[a, bone][:, None]
+        pa, q0, q1 = pos[a, bone], quat[a, bone], quat[b, bone]
+        pp = np.where(hold, pa, pa + u * (pos[b, bone] - pa))
+        d = np.sum(q0 * q1, axis=1, keepdims=True)
+        q1 = np.where(d < 0, -q1, q1)
+        d = np.abs(d)
+        th = np.arccos(np.minimum(d, 1.0))
+        near = d > 0.9995  # nearly parallel: normalized lerp, like slerp()
+        sin_th = np.where(near, 1.0, np.sin(th))
+        qs = (np.sin((1 - u) * th) * q0 + np.sin(u * th) * q1) / sin_th
+        ql = q0 + u * (q1 - q0)
+        ql /= np.linalg.norm(ql, axis=1, keepdims=True)
+        qq = np.where(hold, q0, np.where(near, ql, qs))
+
+        perr = np.linalg.norm(pos[j, bone] - pp, axis=1) / pos_tol
+        dots = np.clip(np.abs(np.sum(quat[j, bone] * qq, axis=1)), 0.0, 1.0)
         err = np.maximum(perr, 2 * np.arccos(dots) / rot_tol)
-        k = int(err.argmax())
-        if err[k] > 1:
-            m = a + 1 + k
-            keep.add(m)
-            stack += [(a, m), (m, b)]
-    return sorted(keep)
+
+        seg_max = np.maximum.reduceat(err, starts)
+        # first sample reaching the segment max, same tie-break as argmax
+        local = np.arange(len(err)) - np.repeat(starts, lens)
+        first = np.minimum.reduceat(np.where(err == np.repeat(seg_max, lens), local, len(err)), starts)
+        split = seg_max > 1
+        m = seg_lo[split] + 1 + first[split]
+        keep[m, seg_b[split]] = True
+        seg_b = np.concatenate([seg_b[split], seg_b[split]])
+        seg_lo, seg_hi = np.concatenate([seg_lo[split], m]), np.concatenate([m, seg_hi[split]])
+
+
+def lossless_keep(vals):
+    """(F, K) mask for (F, K, C) values: drop only samples equal to both neighbours,
+    so interpolating the kept keys reproduces every sample exactly."""
+    keep = np.ones(vals.shape[:2], dtype=bool)
+    same = np.all(vals[1:] == vals[:-1], axis=2)
+    keep[1:-1] = ~(same[:-1] & same[1:])
+    return keep
+
+
+def reduce_keys(t, pos, quat, stepped, pos_tol, rot_tol):
+    """Indices of samples to keep for one curve (see reduce_all)."""
+    mask = reduce_all(t, pos[:, None], quat[:, None], np.asarray(stepped)[:, None], pos_tol, rot_tol)
+    return np.flatnonzero(mask[:, 0]).tolist()
 
 
 def _mat(prop):
@@ -150,14 +188,49 @@ def is_skinned(ao):
                for o in bpy.data.objects if o.type == "MESH" for m in o.modifiers)
 
 
-def bake(ao, exact=False, pos_tol=1e-3, rot_tol=math.radians(0.1), progress=None, bone_rest=None):
+def dependencies(ao):
+    """Objects the armature's evaluated pose can depend on: parents, constraint and
+    driver targets, and modifier objects, followed recursively."""
+    import bpy
+
+    users = {}  # data-block -> objects using it (drivers may target mesh/armature data)
+    for o in bpy.data.objects:
+        if o.data is not None:
+            users.setdefault(o.data, []).append(o)
+    seen, todo = set(), [ao]
+    while todo:
+        o = todo.pop()
+        if o is None or o in seen:
+            continue
+        seen.add(o)
+        todo.append(o.parent)
+        cons = list(o.constraints)
+        if o.type == "ARMATURE":
+            cons += [c for pb in o.pose.bones for c in pb.constraints]
+        for c in cons:
+            todo += [getattr(c, "target", None), getattr(c, "pole_target", None)]
+            todo += [tg.target for tg in getattr(c, "targets", ())]
+        for owner in (o, o.data):
+            ad = getattr(owner, "animation_data", None)
+            for d in (ad.drivers if ad else ()):
+                for v in d.driver.variables:
+                    for tg in v.targets:
+                        if isinstance(tg.id, bpy.types.Object):
+                            todo.append(tg.id)
+                        elif tg.id is not None:
+                            todo += users.get(tg.id, [])
+        todo += [getattr(m, "object", None) for m in getattr(o, "modifiers", ())]
+    return seen
+
+
+def bake(ao, exact=False, pos_tol=1e-3, rot_tol=math.radians(0.1), progress=None, bone_rest=None, isolate=True):
     """Sample the scene frame range of armature `ao` and return the payload dict.
 
     Motor6D bones (Roblox-rigged: transform/transform1/nicetransform) become Motor6D
     poses; every other bone becomes a Roblox Bone pose (skinned meshes). progress(done,
     total) is called while frames are sampled. bone_rest = {bone: rest distance from
     parent in Studio} calibrates Bone translation when the mesh was imported at a
-    different scale.
+    different scale. isolate=False evaluates the whole scene (tests compare both).
     """
     import bpy
     from bpy_extras.io_utils import axis_conversion
@@ -195,8 +268,14 @@ def bake(ao, exact=False, pos_tol=1e-3, rot_tol=math.radians(0.1), progress=None
     frames = list(range(scene.frame_start, scene.frame_end + 1, max(scene.frame_step, 1)))
     fps = scene.render.fps / (scene.render.fps_base or 1.0)
     buf = np.empty((len(frames), nb * 16), dtype=np.float64)
-    depsgraph = bpy.context.evaluated_depsgraph_get()
     restore = (scene.frame_current, scene.frame_subframe)
+    # Only evaluate what the pose depends on: skinned meshes, other characters and
+    # props are switched off for the bake (restored below).
+    needed = dependencies(ao) if isolate else set(scene.objects)
+    skipped = [o for o in scene.objects if o not in needed and not o.hide_viewport]
+    for o in skipped:
+        o.hide_viewport = True
+    depsgraph = bpy.context.evaluated_depsgraph_get()
     try:
         for n, frame in enumerate(frames):
             scene.frame_set(frame)
@@ -204,6 +283,8 @@ def bake(ao, exact=False, pos_tol=1e-3, rot_tol=math.radians(0.1), progress=None
             if progress and n % 10 == 0:
                 progress(n, len(frames))
     finally:
+        for o in skipped:
+            o.hide_viewport = False
         scene.frame_set(restore[0], subframe=restore[1])
     # foreach_get flattens matrices column-major; transpose back to row-major.
     mats = buf.reshape(len(frames), nb, 4, 4).transpose(0, 1, 3, 2)
@@ -261,12 +342,21 @@ def bake(ao, exact=False, pos_tol=1e-3, rot_tol=math.radians(0.1), progress=None
     quat = mat_to_quat(rot / np.linalg.norm(rot, axis=-2, keepdims=True))
     stepped = _stepped_flags(ao, pbones, list(range(nb)), frames)
     times = (np.asarray(frames, dtype=np.float64) - scene.frame_start) / fps
+    moving = (np.abs(pos).max(axis=(0, 2)) >= 1e-6) | (np.abs(quat[..., 3]).min(axis=0) <= 1 - 1e-10)
+    if exact:
+        # Lossless: drop only keys equal (after rounding) to both neighbours, which
+        # Roblox plays back identically. Every frame where anything changes stays.
+        keep_mask = lossless_keep(np.concatenate([pos, quat], axis=2).round(5))
+    else:
+        keep_mask = np.ones((len(frames), nb), dtype=bool)
+        if moving.any():
+            keep_mask[:, moving] = reduce_all(times, pos[:, moving], quat[:, moving], stepped[:, moving], pos_tol, rot_tol)
     bones = {}
     for k, name in enumerate(names):
-        p, q, s = pos[:, k], quat[:, k], stepped[:, k]
-        if np.abs(p).max() < 1e-6 and np.abs(q[:, 3]).min() > 1 - 1e-10:
+        if not moving[k]:
             continue  # rest pose for the whole clip
-        keep = list(range(len(frames))) if exact else reduce_keys(times, p, q, s, pos_tol, rot_tol)
+        p, q, s = pos[:, k], quat[:, k], stepped[:, k]
+        keep = np.flatnonzero(keep_mask[:, k])
         bones[name] = {
             "t": times[keep].round(5).tolist(),
             "p": np.concatenate([p[keep], q[keep]], 1).round(5).ravel().tolist(),

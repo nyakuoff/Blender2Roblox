@@ -48,13 +48,18 @@ for ao in [o for o in bpy.data.objects if o.type == "ARMATURE"]:
     t0 = time.perf_counter()
     out = bake.bake(ao)
     t_red = time.perf_counter() - t0
+    hidden_before = {o.name for o in bpy.data.objects if o.hide_viewport}
+    same = bake.bake(ao, isolate=False) == out  # skipping unrelated objects must not change the pose
+    restored = {o.name for o in bpy.data.objects if o.hide_viewport} == hidden_before
 
     frames = np.concatenate([np.asarray(b["t"]) for b in out["bones"].values()]) * fps
     off_grid = int(np.sum(np.abs(frames - np.round(frames)) > 1e-3))
     n_dense = sum(len(b["t"]) for b in dense["bones"].values())
     n_red = sum(len(b["t"]) for b in out["bones"].values())
     line = (f"{ao.name}: {len(out['bones'])} bones, {n_red}/{n_dense} keys kept, "
-            f"bake {t_red:.2f}s (exact {t_dense:.2f}s), off-grid keys {off_grid}")
+            f"bake {t_red:.2f}s (exact {t_dense:.2f}s), off-grid keys {off_grid}, "
+            f"isolated == full scene: {same}, visibility restored: {restored}")
+    failed |= not (same and restored)
 
     if upstream:
         t0 = time.perf_counter()
@@ -70,7 +75,9 @@ for ao in [o for o in bpy.data.objects if o.type == "ARMATURE"]:
                 mine = dense["bones"].get(bone)
                 if not mine:
                     continue
-                i = int(round(f))  # exact bake: one key per frame, t=0 at frame_start
+                # exact bake drops only repeats, so the last key at or before t is the pose at t
+                # (+1e-4: payload times are rounded to 5 decimals)
+                i = int(np.searchsorted(np.asarray(mine["t"]), kf["t"] + 1e-4, side="right")) - 1
                 p = np.asarray(mine["p"]).reshape(-1, 7)[i]
                 m = np.eye(4)
                 m[:3, :3], m[:3, 3] = quat_to_mat(p[3:]), p[:3]

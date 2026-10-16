@@ -1,6 +1,6 @@
 # Blender2Roblox
 
-Send animations from Blender to Roblox Studio: fast, frame-exact, no skipped frames.
+Send animations from Blender to Roblox Studio: fast, frame-exact, lightweight.
 
 It works with armatures rigged by the original [Blender Animations Plugin](https://github.com/Cautioned/Blender-Animations-Plugin), and with skinned meshes (Roblox Bones).
 
@@ -25,7 +25,7 @@ mkdir -p dist && blender --command extension build --source-dir "$PWD/blender_ad
 |---|---|
 | **Port** | Port the link listens on (default 31337). Must match the port in Studio. |
 | **Start / Stop Link** | Starts or stops the local connection to Studio. It only listens on your own machine. |
-| **Exact (every frame)** | Off: keeps only the keys needed to stay within 0.001 studs / 0.1° of Blender, so files are smaller and look the same. On: one key on every frame. |
+| **Exact (every frame)** | **Off (Default):** Keeps only the keys needed to stay within 0.001 studs / 0.1° of Blender, so files are smaller and look the same.<br>**On:** One key on every frame. |
 | **New rig bones** | How bones are shaped when Studio sends a rig. *Nodes only* points along each joint (original default); *Local axis aligned* points bones toward their child joint, which is nicer for posing. |
 
 ## Studio panel

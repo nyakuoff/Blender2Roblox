@@ -27,6 +27,33 @@ def quat_to_mat(q):
     ])
 
 
+def reference_reduce(t, pos, quat, stepped, pos_tol, rot_tol):
+    """The original one-segment-at-a-time reducer; reduce_all must keep exactly these keys."""
+    n = len(t)
+    keep = {0, n - 1}
+    stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b - a < 2:
+            continue
+        j = np.arange(a + 1, b)
+        if stepped[a]:
+            pp, qq = pos[a], quat[a]
+        else:
+            u = ((t[j] - t[a]) / (t[b] - t[a]))[:, None]
+            pp = pos[a] + u * (pos[b] - pos[a])
+            qq = bake.slerp(quat[a], quat[b], u)
+        perr = np.linalg.norm(pos[j] - pp, axis=1) / pos_tol
+        dots = np.clip(np.abs(np.sum(quat[j] * qq, axis=1)), 0.0, 1.0)
+        err = np.maximum(perr, 2 * np.arccos(dots) / rot_tol)
+        k = int(err.argmax())
+        if err[k] > 1:
+            m = a + 1 + k
+            keep.add(m)
+            stack += [(a, m), (m, b)]
+    return sorted(keep)
+
+
 def reconstruct(t, pos, quat, stepped, keep):
     """Play back the kept keys the way Roblox does: Constant holds, Linear lerps/slerps."""
     out_p, out_q = np.empty_like(pos), np.empty_like(quat)
@@ -91,6 +118,32 @@ def main():
 
     # Every kept key is a sample index, so key times are always whole frames.
     assert all(isinstance(k, int) and 0 <= k < n for k in keep)
+    # Batched reducer keeps exactly the reference keys on random curves (holds, steps, noise).
+    rng = np.random.default_rng(7)
+    for trial in range(60):
+        n = int(rng.integers(3, 400))
+        tt = np.arange(n) / 60.0
+        steps = rng.random(n) < 0.05
+        pos = np.cumsum(rng.normal(0, 0.01, (n, 3)) * (rng.random((n, 1)) < 0.7), axis=0)
+        ang = np.cumsum(rng.normal(0, 0.01, n) + np.where(steps, 0.3, 0))
+        quat = np.stack([axis_angle_quat((1, 2, 3), a) for a in ang])
+        stepped = rng.random(n) < (0.5 if trial % 2 else 0.0)
+        want = reference_reduce(tt, pos, quat, stepped, pos_tol, rot_tol)
+        got = bake.reduce_keys(tt, pos, quat, stepped, pos_tol, rot_tol)
+        assert got == want, (trial, len(got), len(want))
+    # Exact mode: lossless_keep drops only samples equal to both ends of their gap, so
+    # replaying the kept keys (Linear or Constant) reproduces every sample bit-for-bit.
+    for trial in range(30):
+        n = int(rng.integers(3, 300))
+        tt = np.arange(n) / 60.0
+        runs = np.repeat(rng.normal(0, 1, (n, 7)), rng.integers(1, 20, n), axis=0)[:n].round(5)
+        mask = bake.lossless_keep(runs[:, None, :])[:, 0]
+        keep = np.flatnonzero(mask).tolist()
+        assert keep[0] == 0 and keep[-1] == n - 1
+        for a, b in zip(keep, keep[1:]):
+            seg = runs[a:b + 1]
+            if b - a > 1:
+                assert np.array_equal(seg[1:-1], np.repeat(seg[:1], b - a - 1, axis=0)) and np.array_equal(seg[0], seg[-1])
     print("test_reduce: ok")
 
 

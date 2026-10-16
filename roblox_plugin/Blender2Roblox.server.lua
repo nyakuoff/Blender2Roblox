@@ -280,6 +280,8 @@ end
 ---------------------------------------------------------------------------
 -- Link
 ---------------------------------------------------------------------------
+local lastDecodeTime = 0 -- seconds spent in JSONDecode by the last request (import timing)
+
 local function request(method, path, body)
 	local res = HttpService:RequestAsync({
 		Url = `http://127.0.0.1:{tonumber(portBox.Text) or 31337}{path}`,
@@ -287,7 +289,9 @@ local function request(method, path, body)
 		Headers = { ["Content-Type"] = "application/json" },
 		Body = if body ~= nil then HttpService:JSONEncode(body) else nil,
 	})
+	local tDecode = os.clock()
 	local ok, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+	lastDecodeTime = os.clock() - tDecode
 	if not res.Success then
 		error(if ok and type(data) == "table" and data.error then data.error else `HTTP {res.StatusCode}`, 0)
 	end
@@ -730,7 +734,9 @@ local function importArmature(name)
 		log(`Import failed: {data}`, "error")
 		return
 	end
-	local tBlender = os.clock() - t0
+	local tDecode = lastDecodeTime
+	local tFetch = os.clock() - t0 - tDecode -- Blender bake + localhost transfer
+	local tBuild0 = os.clock()
 
 	local folder = ServerStorage:FindFirstChild("Blender2Roblox") or new("Folder", { Name = "Blender2Roblox", Parent = ServerStorage })
 	previews = {}
@@ -764,7 +770,10 @@ local function importArmature(name)
 		log(`Import failed: {err}`, "error")
 		return
 	end
-	setProgress(1, string.format("Done in %.2fs (Blender %.2fs) · %.2fs clip", os.clock() - t0, tBlender, data.len))
+	setProgress(1, string.format(
+		"Done in %.2fs: Blender + transfer %.2fs · decode %.2fs · build %.2fs · %.2fs clip",
+		os.clock() - t0, tFetch, tDecode, os.clock() - tBuild0, data.len
+	))
 	log(table.concat(lines, "\n"), level)
 	play()
 end

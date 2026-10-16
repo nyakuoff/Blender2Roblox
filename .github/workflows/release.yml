@@ -1,0 +1,72 @@
+# Publishes a pre-alpha GitHub release whenever main has a version with no release yet.
+# Bump `version` in blender_addon/blender2roblox/blender_manifest.toml to ship a new one;
+# notes come from release-notes/v<version>.md (GitHub's generated notes if it's missing).
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: v
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' blender_addon/blender2roblox/blender_manifest.toml)
+          tag="v${version}-prealpha"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Release $tag already exists; nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.v.outputs.exists != 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Test
+        if: steps.v.outputs.exists != 'true'
+        run: |
+          pip install numpy
+          python blender_addon/tests/test_reduce.py
+
+      - name: Build Blender extension zip
+        if: steps.v.outputs.exists != 'true'
+        run: |
+          mkdir -p dist
+          cd blender_addon/blender2roblox
+          zip -r "../../dist/blender2roblox-${{ steps.v.outputs.version }}.zip" . -x '__pycache__/*' '*.pyc'
+
+      - name: Build Studio plugin (.rbxm / .rbxmx)
+        if: steps.v.outputs.exists != 'true'
+        run: |
+          curl -fsSL -o rojo.zip https://github.com/rojo-rbx/rojo/releases/download/v7.4.4/rojo-7.4.4-linux-x86_64.zip
+          unzip -q rojo.zip -d rojo
+          ./rojo/rojo build roblox_plugin -o dist/Blender2Roblox.rbxm
+          ./rojo/rojo build roblox_plugin -o dist/Blender2Roblox.rbxmx
+
+      - name: Publish pre-release
+        if: steps.v.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.v.outputs.tag }}"
+          notes="release-notes/v${{ steps.v.outputs.version }}.md"
+          if [ -f "$notes" ]; then notes_args=(--notes-file "$notes"); else notes_args=(--generate-notes); fi
+          gh release create "$tag" dist/* \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Blender2Roblox ${{ steps.v.outputs.version }} (Pre-alpha)" \
+            "${notes_args[@]}"
